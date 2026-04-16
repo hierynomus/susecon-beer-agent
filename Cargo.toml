@@ -1,0 +1,20 @@
+[package]
+name = "beer-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "beer-mcp"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "1.4", features = ["server", "macros", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+axum = "0.8"
+tokio-util = "0.7"
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+schemars = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+anyhow = "1"

@@ -1,0 +1,5 @@
+target/
+helm/
+.git/
+.gitignore
+*.md

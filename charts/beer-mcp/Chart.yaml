@@ -1,0 +1,12 @@
+apiVersion: v2
+name: beer-mcp
+description: MCP server that accepts beer orders and dispatches a human for delivery
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - mcp
+  - beer
+  - susecon
+maintainers:
+  - name: SUSE
