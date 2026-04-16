@@ -163,7 +163,9 @@ async fn main() -> Result<()> {
     let mcp_service = StreamableHttpService::new(
         || Ok(BeerOrderService::new()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+        StreamableHttpServerConfig::default()
+            .with_cancellation_token(ct.child_token())
+            .disable_allowed_hosts(),
     );
 
     let app = Router::new()
