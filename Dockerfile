@@ -6,8 +6,8 @@ ARG TARGETARCH
 ARG BINARY=susecon-beer-agent
 
 # Copy the pre-compiled binaries for the target architecture
-COPY --from=binaries linux/${TARGETARCH}/${BINARY} /usr/local/bin/${BINARY}
+COPY --from=binaries linux/${TARGETARCH}/susecon-beer-agent /usr/local/bin/susecon-beer-agent
 
 USER 1001
 
-ENTRYPOINT ["/usr/local/bin/${BINARY}"]
+ENTRYPOINT ["/usr/local/bin/susecon-beer-agent"]
