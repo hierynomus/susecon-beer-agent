@@ -55,6 +55,16 @@ pub struct OrderBeerParams {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn resolve_beer_name(beer_type: Option<String>) -> String {
+    beer_type
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "beer".to_string())
+}
+
+// ---------------------------------------------------------------------------
 // MCP service
 // ---------------------------------------------------------------------------
 
@@ -79,10 +89,7 @@ impl BeerOrderService {
         &self,
         Parameters(params): Parameters<OrderBeerParams>,
     ) -> Result<CallToolResult, McpError> {
-        let beer = params
-            .beer_type
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "beer".to_string());
+        let beer = resolve_beer_name(params.beer_type);
 
         info!("🍺  Incoming beer order: \"{}\"", beer);
         info!("⏳  Contacting tap room...");
@@ -181,4 +188,105 @@ async fn main() -> Result<()> {
 
 async fn health() -> &'static str {
     "OK"
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    // --- resolve_beer_name ---------------------------------------------------
+
+    #[test]
+    fn beer_name_from_none_defaults_to_beer() {
+        assert_eq!(resolve_beer_name(None), "beer");
+    }
+
+    #[test]
+    fn beer_name_from_empty_string_defaults_to_beer() {
+        assert_eq!(resolve_beer_name(Some(String::new())), "beer");
+    }
+
+    #[test]
+    fn beer_name_from_whitespace_defaults_to_beer() {
+        assert_eq!(resolve_beer_name(Some("   ".to_string())), "beer");
+    }
+
+    #[test]
+    fn beer_name_from_specified_type_is_preserved() {
+        assert_eq!(resolve_beer_name(Some("IPA".to_string())), "IPA");
+    }
+
+    // --- RESPONSES constant --------------------------------------------------
+
+    #[test]
+    fn responses_is_non_empty() {
+        assert!(!RESPONSES.is_empty());
+    }
+
+    #[test]
+    fn all_response_templates_contain_placeholder() {
+        for template in RESPONSES {
+            assert!(
+                template.contains("{beer}"),
+                "template missing {{beer}} placeholder: {template}"
+            );
+        }
+    }
+
+    // --- order_beer tool -----------------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn order_beer_with_named_type_mentions_beer_in_response() {
+        let svc = BeerOrderService::new();
+        let result = svc
+            .order_beer(Parameters(OrderBeerParams {
+                beer_type: Some("stout".to_string()),
+            }))
+            .await
+            .expect("order_beer should succeed");
+
+        assert!(result.is_error.is_none() || !result.is_error.unwrap());
+        let text = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .collect::<String>();
+        assert!(text.contains("stout"), "response should mention the beer type: {text}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn order_beer_with_no_type_defaults_to_beer() {
+        let svc = BeerOrderService::new();
+        let result = svc
+            .order_beer(Parameters(OrderBeerParams { beer_type: None }))
+            .await
+            .expect("order_beer should succeed");
+
+        assert!(result.is_error.is_none() || !result.is_error.unwrap());
+        let text = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .collect::<String>();
+        assert!(text.contains("beer"), "response should contain 'beer': {text}");
+    }
+
+    // --- get_info ------------------------------------------------------------
+
+    #[test]
+    fn get_info_advertises_tools_capability() {
+        let svc = BeerOrderService::new();
+        let info = svc.get_info();
+        assert!(
+            info.capabilities.tools.is_some(),
+            "server should advertise tools capability"
+        );
+    }
 }
