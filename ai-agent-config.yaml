@@ -1,7 +1,7 @@
 apiVersion: ai.cattle.io/v1alpha1
 kind: AIAgentConfig
 metadata:
-  name: beer-mcp
+  name: susecon-beer-agent
   namespace: cattle-ai-agent-system
 spec:
   authenticationType: NONE
@@ -17,7 +17,7 @@ spec:
   displayName: Beer Ordering
   enabled: true
   humanValidationTools: []
-  mcpURL: http://beer-mcp.beer-mcp.svc:3000/mcp
+  mcpURL: http://susecon-beer-agent.susecon-beer-agent.svc:3000/mcp
   systemPrompt: |-
     You are a Beer Ordering assistant. Your primary goal is to help conference attendees order a beer from the bar.
 

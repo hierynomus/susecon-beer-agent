@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
         .nest_service("/mcp", mcp_service);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    info!("🍺  beer-mcp listening on {bind_addr}  (MCP endpoint: {bind_addr}/mcp)");
+    info!("🍺  susecon-beer-agent listening on {bind_addr}  (MCP endpoint: {bind_addr}/mcp)");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

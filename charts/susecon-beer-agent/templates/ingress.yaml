@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "beer-mcp.fullname" . }}
+  name: {{ include "susecon-beer-agent.fullname" . }}
   labels:
-    {{- include "beer-mcp.labels" . | nindent 4 }}
+    {{- include "susecon-beer-agent.labels" . | nindent 4 }}
   annotations:
     {{- if and .Values.ingress.tls.enabled .Values.ingress.tls.certManager.enabled }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.certManager.clusterIssuer | quote }}
@@ -19,13 +19,13 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "beer-mcp.fullname" . }}
+                name: {{ include "susecon-beer-agent.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host | quote }}
-      secretName: {{ include "beer-mcp.tlsSecretName" . }}
+      secretName: {{ include "susecon-beer-agent.tlsSecretName" . }}
   {{- end }}
 {{- end }}

@@ -1,5 +1,5 @@
 apiVersion: v2
-name: beer-mcp
+name: susecon-beer-agent
 description: MCP server that accepts beer orders and dispatches a human for delivery
 type: application
 version: 0.1.0

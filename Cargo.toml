@@ -1,10 +1,10 @@
 [package]
-name = "beer-mcp"
+name = "susecon-beer-agent"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "beer-mcp"
+name = "susecon-beer-agent"
 path = "src/main.rs"
 
 [dependencies]

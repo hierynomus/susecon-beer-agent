@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "beer-mcp.name" -}}
+{{- define "susecon-beer-agent.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "beer-mcp.fullname" -}}
+{{- define "susecon-beer-agent.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,16 +24,16 @@ Create a default fully qualified app name.
 {{/*
 Create chart label.
 */}}
-{{- define "beer-mcp.chart" -}}
+{{- define "susecon-beer-agent.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels.
 */}}
-{{- define "beer-mcp.labels" -}}
-helm.sh/chart: {{ include "beer-mcp.chart" . }}
-{{ include "beer-mcp.selectorLabels" . }}
+{{- define "susecon-beer-agent.labels" -}}
+helm.sh/chart: {{ include "susecon-beer-agent.chart" . }}
+{{ include "susecon-beer-agent.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -43,18 +43,18 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels.
 */}}
-{{- define "beer-mcp.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "beer-mcp.name" . }}
+{{- define "susecon-beer-agent.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "susecon-beer-agent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 TLS secret name — falls back to <fullname>-tls when secretName is not set.
 */}}
-{{- define "beer-mcp.tlsSecretName" -}}
+{{- define "susecon-beer-agent.tlsSecretName" -}}
 {{- if .Values.ingress.tls.secretName }}
 {{- .Values.ingress.tls.secretName }}
 {{- else }}
-{{- printf "%s-tls" (include "beer-mcp.fullname" .) }}
+{{- printf "%s-tls" (include "susecon-beer-agent.fullname" .) }}
 {{- end }}
 {{- end }}

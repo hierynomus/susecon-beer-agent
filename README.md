@@ -1,4 +1,4 @@
-# beer-mcp
+# susecon-beer-agent
 
 An [MCP](https://modelcontextprotocol.io/) server that accepts beer orders and dispatches a human for delivery. Built with Rust for SUSECON.
 
@@ -27,16 +27,16 @@ The Dockerfile expects pre-compiled binaries to be provided via a `binaries` bui
 cross build --release --target aarch64-unknown-linux-musl
 docker buildx build \
   --build-context binaries=./target \
-  -t beer-mcp .
+  -t susecon-beer-agent .
 ```
 
 ## Helm
 
-A Helm chart is included under `charts/beer-mcp/`. Minimal install:
+A Helm chart is included under `charts/susecon-beer-agent/`. Minimal install:
 
 ```sh
-helm install beer-mcp ./charts/beer-mcp \
-  --set ingress.host=beer-mcp.example.com
+helm install susecon-beer-agent ./charts/susecon-beer-agent \
+  --set ingress.host=susecon-beer-agent.example.com
 ```
 
-See [`charts/beer-mcp/values.yaml`](charts/beer-mcp/values.yaml) for all available options including TLS and cert-manager integration.
+See [`charts/susecon-beer-agent/values.yaml`](charts/susecon-beer-agent/values.yaml) for all available options including TLS and cert-manager integration.
