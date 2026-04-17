@@ -182,8 +182,20 @@ pub async fn rancher_auth_middleware(
     next: Next,
 ) -> Result<Response, AuthError> {
     let headers = req.headers();
-    let r_token = headers.get("R_token").and_then(|v| v.to_str().ok());
-    let r_url = headers.get("R_url").and_then(|v| v.to_str().ok());
+    let r_token = headers
+        .get("R_token")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty());
+    let r_url = headers
+        .get("R_url")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty());
+
+    info!(
+        r_token_present = r_token.is_some(),
+        r_url = r_url.unwrap_or("<missing>"),
+        "Auth middleware: incoming request"
+    );
 
     let (token, url) = r_token.zip(r_url).ok_or(AuthError::MissingHeaders)?;
     let url = url.trim_end_matches('/');
