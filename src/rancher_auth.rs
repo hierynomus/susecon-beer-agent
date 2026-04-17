@@ -11,26 +11,32 @@ use serde::Deserialize;
 use tracing::{error, info, warn};
 
 // ---------------------------------------------------------------------------
+// Auth context — inserted into request extensions by middleware,
+// extracted by the tool handler to enforce role checks.
+// ---------------------------------------------------------------------------
+
+/// Holds the authenticated user's identity and their global roles.
+/// Inserted into Axum request extensions by the auth middleware so that
+/// downstream MCP tool handlers can access it via `Extension<http::request::Parts>`.
+#[derive(Clone, Debug)]
+pub struct AuthContext {
+    pub display_name: String,
+    pub roles: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Auth error
 // ---------------------------------------------------------------------------
 
 pub(crate) enum AuthError {
-    MissingHeaders,
     RancherUnreachable(String),
     InvalidToken(String),
     BadGateway(String),
-    Forbidden { username: String, required_role: String, actual_roles: Vec<String> },
 }
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         match self {
-            Self::MissingHeaders => {
-                warn!("Auth failed: missing R_token and/or R_url headers");
-                (StatusCode::UNAUTHORIZED, "Unauthorized: R_token and R_url headers are required")
-                    .into_response()
-            }
             Self::RancherUnreachable(detail) => {
                 error!(detail, "Auth failed: could not reach Rancher");
                 (StatusCode::BAD_GATEWAY, "Authentication failed: unable to reach Rancher server")
@@ -44,19 +50,6 @@ impl IntoResponse for AuthError {
             Self::BadGateway(detail) => {
                 error!(detail, "Auth failed: unexpected Rancher response");
                 (StatusCode::BAD_GATEWAY, "Authentication failed: unexpected response from Rancher")
-                    .into_response()
-            }
-            Self::Forbidden { username, required_role, actual_roles } => {
-                warn!(
-                    %username,
-                    %required_role,
-                    ?actual_roles,
-                    "Auth DENIED: user does not have the required role"
-                );
-                (
-                    StatusCode::FORBIDDEN,
-                    format!("Forbidden: user \"{username}\" does not have the required role \"{required_role}\""),
-                )
                     .into_response()
             }
         }
@@ -97,11 +90,10 @@ struct GlobalRoleBinding {
 #[derive(Clone)]
 pub struct RancherAuthState {
     http_client: reqwest::Client,
-    required_role: String,
 }
 
 impl RancherAuthState {
-    pub fn new(required_role: String, tls_verify: bool) -> Self {
+    pub fn new(tls_verify: bool) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .danger_accept_invalid_certs(!tls_verify)
@@ -110,7 +102,6 @@ impl RancherAuthState {
 
         Self {
             http_client,
-            required_role,
         }
     }
 
@@ -146,8 +137,7 @@ impl RancherAuthState {
             .map_err(|e| AuthError::BadGateway(format!("failed to parse {url}: {e}. Body: {body}")))
     }
 
-    async fn authenticate(&self, token: &str, rancher_url: &str) -> Result<String, AuthError> {
-        // Identify the current principal
+    async fn identify(&self, token: &str, rancher_url: &str) -> Result<UserIdentity, AuthError> {
         let principals_url = format!("{rancher_url}/v3/principals");
         let principals: RancherCollection<RancherPrincipal> =
             self.get_json(&principals_url, token).await?;
@@ -163,60 +153,58 @@ impl RancherAuthState {
             .display_name
             .as_deref()
             .or(me.login_name.as_deref())
-            .unwrap_or("unknown");
+            .unwrap_or("unknown")
+            .to_string();
+
+        let principal_ids: Vec<String> = principals.data.iter().map(|p| p.id.clone()).collect();
 
         info!(
-            display_name,
+            %display_name,
             principal_id = %me.id,
             principal_type = me.principal_type.as_deref().unwrap_or("unknown"),
             "Authenticated Rancher principal"
         );
 
-        // Collect all principal IDs for this user (user + group principals)
-        let my_principal_ids: Vec<&str> = principals
-            .data
-            .iter()
-            .map(|p| p.id.as_str())
-            .collect();
+        Ok(UserIdentity {
+            display_name,
+            principal_ids,
+        })
+    }
 
-        info!(?my_principal_ids, "User's principal IDs");
-
-        // Fetch all global role bindings and match against our principal IDs
-        // We need to check both userId-based and groupPrincipalId-based bindings
+    /// Fetch the user's global roles that match their principal IDs.
+    async fn fetch_roles(
+        &self,
+        token: &str,
+        rancher_url: &str,
+        principal_ids: &[String],
+    ) -> Result<Vec<String>, AuthError> {
         let grb_url = format!("{rancher_url}/v3/globalRoleBindings");
         let bindings: RancherCollection<GlobalRoleBinding> =
             self.get_json(&grb_url, token).await?;
 
-        let matching_roles: Vec<&str> = bindings
+        let roles: Vec<String> = bindings
             .data
             .iter()
             .filter(|b| {
-                // Match by userId (principal ID prefix before ://)
                 let user_match = b.user_id.as_deref().map_or(false, |uid| {
-                    my_principal_ids.iter().any(|pid| pid.ends_with(uid))
+                    principal_ids.iter().any(|pid| pid.ends_with(uid))
                 });
-                // Match by groupPrincipalId
                 let group_match = b.group_principal_id.as_deref().map_or(false, |gid| {
-                    my_principal_ids.contains(&gid)
+                    principal_ids.iter().any(|pid| pid == gid)
                 });
                 user_match || group_match
             })
-            .map(|b| b.global_role_id.as_str())
+            .map(|b| b.global_role_id.clone())
             .collect();
 
-        info!(?matching_roles, "User's matching global roles");
-
-        if matching_roles.iter().any(|r| *r == self.required_role) {
-            info!(display_name, role = %self.required_role, "User has the required role");
-            Ok(display_name.to_string())
-        } else {
-            Err(AuthError::Forbidden {
-                username: display_name.to_string(),
-                required_role: self.required_role.clone(),
-                actual_roles: matching_roles.into_iter().map(String::from).collect(),
-            })
-        }
+        info!(?roles, "User's matching global roles");
+        Ok(roles)
     }
+}
+
+struct UserIdentity {
+    display_name: String,
+    principal_ids: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +213,7 @@ impl RancherAuthState {
 
 pub async fn rancher_auth_middleware(
     State(state): State<RancherAuthState>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, AuthError> {
     let headers = req.headers();
@@ -238,23 +226,34 @@ pub async fn rancher_auth_middleware(
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty());
 
-    // If neither auth header is present, allow through (e.g. MCP discovery).
-    // If only one is present, that's a misconfiguration — reject.
-    match (r_token, r_url) {
-        (None, None) => {
+    // No auth headers → allow through (MCP discovery / initialization)
+    let (token, url) = match r_token.zip(r_url) {
+        Some((t, u)) => (t.to_string(), u.trim_end_matches('/').to_string()),
+        None => {
             info!("Auth middleware: no auth headers, allowing through (discovery)");
             return Ok(next.run(req).await);
         }
-        (Some(_), None) | (None, Some(_)) => {
-            warn!("Auth middleware: only one of R_token/R_url present — rejecting");
-            return Err(AuthError::MissingHeaders);
-        }
-        (Some(token), Some(url)) => {
-            let url = url.trim_end_matches('/');
-            info!(r_url = url, r_token = token, "Auth middleware: validating Rancher credentials");
-            state.authenticate(token, url).await?;
-        }
-    }
+    };
+
+    // Authenticate: validate the token and identify the user
+    let identity = state.identify(&token, &url).await?;
+
+    // Fetch the user's global roles
+    let roles = state
+        .fetch_roles(&token, &url, &identity.principal_ids)
+        .await?;
+
+    info!(
+        display_name = %identity.display_name,
+        ?roles,
+        "Auth context attached to request"
+    );
+
+    // Stash the auth context in request extensions so tool handlers can access it.
+    req.extensions_mut().insert(AuthContext {
+        display_name: identity.display_name,
+        roles,
+    });
 
     Ok(next.run(req).await)
 }

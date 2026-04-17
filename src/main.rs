@@ -8,6 +8,7 @@ use rmcp::{
     ErrorData as McpError,
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    handler::server::common::Extension,
     model::*,
     tool, tool_handler, tool_router,
     transport::streamable_http_server::{
@@ -21,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 mod rancher_auth;
-use rancher_auth::{RancherAuthState, rancher_auth_middleware};
+use rancher_auth::{AuthContext, RancherAuthState, rancher_auth_middleware};
 
 // ---------------------------------------------------------------------------
 // Response messages — one is chosen at random per order
@@ -73,14 +74,17 @@ fn resolve_beer_name(beer_type: Option<String>) -> String {
 
 #[derive(Clone)]
 pub struct BeerOrderService {
+    required_role: String,
     #[allow(dead_code)]
     tool_router: ToolRouter<BeerOrderService>,
 }
 
 #[tool_router]
 impl BeerOrderService {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(required_role: String) -> Self {
+        let mut svc = Self::default();
+        svc.required_role = required_role;
+        svc
     }
 
     /// Order a beer from the bar. A human will deliver it to you shortly.
@@ -90,8 +94,43 @@ impl BeerOrderService {
     )]
     async fn order_beer(
         &self,
+        Extension(parts): Extension<http::request::Parts>,
         Parameters(params): Parameters<OrderBeerParams>,
     ) -> Result<CallToolResult, McpError> {
+        // Check authorization: require the configured global role
+        let auth = parts.extensions.get::<AuthContext>();
+        match auth {
+            None => {
+                tracing::warn!("Beer order rejected: no auth context (unauthenticated request)");
+                return Err(McpError::invalid_request(
+                    "Authentication required to order beer. Please provide R_token and R_url headers.",
+                    None,
+                ));
+            }
+            Some(ctx) if !ctx.roles.iter().any(|r| r == &self.required_role) => {
+                tracing::warn!(
+                    user = %ctx.display_name,
+                    required = %self.required_role,
+                    actual = ?ctx.roles,
+                    "Beer order rejected: missing required role"
+                );
+                return Err(McpError::invalid_request(
+                    format!(
+                        "Forbidden: user \"{}\" does not have the required role \"{}\"",
+                        ctx.display_name, self.required_role
+                    ),
+                    None,
+                ));
+            }
+            Some(ctx) => {
+                tracing::info!(
+                    user = %ctx.display_name,
+                    role = %self.required_role,
+                    "Beer order authorized"
+                );
+            }
+        }
+
         let beer = resolve_beer_name(params.beer_type);
 
         info!("🍺  Incoming beer order: \"{}\"", beer);
@@ -117,6 +156,7 @@ impl BeerOrderService {
 impl Default for BeerOrderService {
     fn default() -> Self {
         Self {
+            required_role: String::new(),
             tool_router: Self::tool_router(),
         }
     }
@@ -171,10 +211,11 @@ async fn main() -> Result<()> {
 
     let ct = CancellationToken::new();
 
-    let auth_state = RancherAuthState::new(required_role, rancher_tls_verify);
+    let auth_state = RancherAuthState::new(rancher_tls_verify);
 
+    let required_role_for_service = required_role.clone();
     let mcp_service = StreamableHttpService::new(
-        || Ok(BeerOrderService::new()),
+        move || Ok(BeerOrderService::new(required_role_for_service.clone())),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()
             .with_cancellation_token(ct.child_token())
@@ -220,6 +261,7 @@ async fn health() -> &'static str {
 mod tests {
     use super::*;
     use rmcp::handler::server::wrapper::Parameters;
+    use rmcp::handler::server::common::Extension;
 
     // --- resolve_beer_name ---------------------------------------------------
 
@@ -260,15 +302,29 @@ mod tests {
         }
     }
 
+    // --- helpers for tests ----------------------------------------------------
+
+    fn make_authed_parts() -> http::request::Parts {
+        let (mut parts, _) = http::Request::new(()).into_parts();
+        parts.extensions.insert(AuthContext {
+            display_name: "test-user".to_string(),
+            roles: vec!["test-role".to_string()],
+        });
+        parts
+    }
+
     // --- order_beer tool -----------------------------------------------------
 
     #[tokio::test(start_paused = true)]
     async fn order_beer_with_named_type_mentions_beer_in_response() {
-        let svc = BeerOrderService::new();
+        let svc = BeerOrderService::new("test-role".to_string());
         let result = svc
-            .order_beer(Parameters(OrderBeerParams {
-                beer_type: Some("stout".to_string()),
-            }))
+            .order_beer(
+                Extension(make_authed_parts()),
+                Parameters(OrderBeerParams {
+                    beer_type: Some("stout".to_string()),
+                }),
+            )
             .await
             .expect("order_beer should succeed");
 
@@ -284,9 +340,12 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn order_beer_with_no_type_defaults_to_beer() {
-        let svc = BeerOrderService::new();
+        let svc = BeerOrderService::new("test-role".to_string());
         let result = svc
-            .order_beer(Parameters(OrderBeerParams { beer_type: None }))
+            .order_beer(
+                Extension(make_authed_parts()),
+                Parameters(OrderBeerParams { beer_type: None }),
+            )
             .await
             .expect("order_beer should succeed");
 
@@ -304,7 +363,7 @@ mod tests {
 
     #[test]
     fn get_info_advertises_tools_capability() {
-        let svc = BeerOrderService::new();
+        let svc = BeerOrderService::new("test-role".to_string());
         let info = svc.get_info();
         assert!(
             info.capabilities.tools.is_some(),
