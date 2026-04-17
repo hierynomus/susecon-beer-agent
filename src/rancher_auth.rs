@@ -191,16 +191,23 @@ pub async fn rancher_auth_middleware(
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty());
 
-    info!(
-        r_token_present = r_token.is_some(),
-        r_url = r_url.unwrap_or("<missing>"),
-        "Auth middleware: incoming request"
-    );
-
-    let (token, url) = r_token.zip(r_url).ok_or(AuthError::MissingHeaders)?;
-    let url = url.trim_end_matches('/');
-
-    state.authenticate(token, url).await?;
+    // If neither auth header is present, allow through (e.g. MCP discovery).
+    // If only one is present, that's a misconfiguration — reject.
+    match (r_token, r_url) {
+        (None, None) => {
+            info!("Auth middleware: no auth headers, allowing through (discovery)");
+            return Ok(next.run(req).await);
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            warn!("Auth middleware: only one of R_token/R_url present — rejecting");
+            return Err(AuthError::MissingHeaders);
+        }
+        (Some(token), Some(url)) => {
+            let url = url.trim_end_matches('/');
+            info!(r_url = url, "Auth middleware: validating Rancher credentials");
+            state.authenticate(token, url).await?;
+        }
+    }
 
     Ok(next.run(req).await)
 }
