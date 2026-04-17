@@ -182,7 +182,7 @@ async fn main() -> Result<()> {
     );
 
     let mcp_router = Router::new()
-        .nest_service("/", mcp_service)
+        .fallback_service(mcp_service)
         .layer(middleware::from_fn_with_state(
             auth_state,
             rancher_auth_middleware,
