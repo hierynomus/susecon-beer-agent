@@ -68,9 +68,13 @@ impl IntoResponse for AuthError {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-struct RancherUser {
+#[serde(rename_all = "camelCase")]
+struct RancherPrincipal {
     id: String,
-    username: Option<String>,
+    login_name: Option<String>,
+    display_name: Option<String>,
+    principal_type: Option<String>,
+    me: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +86,8 @@ struct RancherCollection<T> {
 #[serde(rename_all = "camelCase")]
 struct GlobalRoleBinding {
     global_role_id: String,
+    user_id: Option<String>,
+    group_principal_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -141,38 +147,73 @@ impl RancherAuthState {
     }
 
     async fn authenticate(&self, token: &str, rancher_url: &str) -> Result<String, AuthError> {
-        // Identify the user
-        let me_url = format!("{rancher_url}/v3/users?me");
-        let users: RancherCollection<RancherUser> = self.get_json(&me_url, token).await?;
+        // Identify the current principal
+        let principals_url = format!("{rancher_url}/v3/principals");
+        let principals: RancherCollection<RancherPrincipal> =
+            self.get_json(&principals_url, token).await?;
 
-        let user = users
+        let me = principals
             .data
-            .into_iter()
-            .next()
-            .ok_or_else(|| AuthError::InvalidToken("empty user list".into()))?;
+            .iter()
+            .find(|p| p.me == Some(true))
+            .or_else(|| principals.data.first())
+            .ok_or_else(|| AuthError::InvalidToken("no principals returned".into()))?;
 
-        let username = user.username.unwrap_or_else(|| "unknown".into());
-        info!(%username, user_id = %user.id, "Authenticated Rancher user");
+        let display_name = me
+            .display_name
+            .as_deref()
+            .or(me.login_name.as_deref())
+            .unwrap_or("unknown");
 
-        // Check global role bindings
-        let grb_url = format!("{rancher_url}/v3/globalRoleBindings?userId={}", user.id);
+        info!(
+            display_name,
+            principal_id = %me.id,
+            principal_type = me.principal_type.as_deref().unwrap_or("unknown"),
+            "Authenticated Rancher principal"
+        );
+
+        // Collect all principal IDs for this user (user + group principals)
+        let my_principal_ids: Vec<&str> = principals
+            .data
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+
+        info!(?my_principal_ids, "User's principal IDs");
+
+        // Fetch all global role bindings and match against our principal IDs
+        // We need to check both userId-based and groupPrincipalId-based bindings
+        let grb_url = format!("{rancher_url}/v3/globalRoleBindings");
         let bindings: RancherCollection<GlobalRoleBinding> =
             self.get_json(&grb_url, token).await?;
 
-        let role_ids: Vec<String> = bindings
+        let matching_roles: Vec<&str> = bindings
             .data
-            .into_iter()
-            .map(|b| b.global_role_id)
+            .iter()
+            .filter(|b| {
+                // Match by userId (principal ID prefix before ://)
+                let user_match = b.user_id.as_deref().map_or(false, |uid| {
+                    my_principal_ids.iter().any(|pid| pid.ends_with(uid))
+                });
+                // Match by groupPrincipalId
+                let group_match = b.group_principal_id.as_deref().map_or(false, |gid| {
+                    my_principal_ids.contains(&gid)
+                });
+                user_match || group_match
+            })
+            .map(|b| b.global_role_id.as_str())
             .collect();
 
-        if role_ids.iter().any(|r| r == &self.required_role) {
-            info!(%username, role = %self.required_role, "User has the required role");
-            Ok(username)
+        info!(?matching_roles, "User's matching global roles");
+
+        if matching_roles.iter().any(|r| *r == self.required_role) {
+            info!(display_name, role = %self.required_role, "User has the required role");
+            Ok(display_name.to_string())
         } else {
             Err(AuthError::Forbidden {
-                username,
+                username: display_name.to_string(),
                 required_role: self.required_role.clone(),
-                actual_roles: role_ids,
+                actual_roles: matching_roles.into_iter().map(String::from).collect(),
             })
         }
     }
