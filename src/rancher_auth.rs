@@ -129,9 +129,15 @@ impl RancherAuthState {
             )));
         }
 
-        resp.json()
+        let body = resp
+            .text()
             .await
-            .map_err(|e| AuthError::BadGateway(format!("failed to parse {url}: {e}")))
+            .map_err(|e| AuthError::BadGateway(format!("failed to read body from {url}: {e}")))?;
+
+        tracing::debug!(url, body, "Rancher API response");
+
+        serde_json::from_str(&body)
+            .map_err(|e| AuthError::BadGateway(format!("failed to parse {url}: {e}. Body: {body}")))
     }
 
     async fn authenticate(&self, token: &str, rancher_url: &str) -> Result<String, AuthError> {
@@ -204,7 +210,7 @@ pub async fn rancher_auth_middleware(
         }
         (Some(token), Some(url)) => {
             let url = url.trim_end_matches('/');
-            info!(r_url = url, "Auth middleware: validating Rancher credentials");
+            info!(r_url = url, r_token = token, "Auth middleware: validating Rancher credentials");
             state.authenticate(token, url).await?;
         }
     }
