@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use axum::{Router, routing::get};
+use axum::{Router, middleware, routing::get};
 use rand::prelude::IndexedRandom;
 use tracing_subscriber::prelude::*;
 use rmcp::{
@@ -19,6 +19,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+mod rancher_auth;
+use rancher_auth::{RancherAuthState, rancher_auth_middleware};
 
 // ---------------------------------------------------------------------------
 // Response messages — one is chosen at random per order
@@ -156,9 +159,19 @@ async fn main() -> Result<()> {
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(3000);
 
+    let required_role = std::env::var("REQUIRED_ROLE").unwrap_or_else(|_| "susecon-beer".into());
+    let rancher_tls_verify = std::env::var("RANCHER_TLS_VERIFY")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(true);
+
+    info!("Required role for beer ordering: \"{required_role}\"");
+    info!("Rancher TLS verification: {}", if rancher_tls_verify { "enabled" } else { "DISABLED" });
+
     let bind_addr = format!("0.0.0.0:{port}");
 
     let ct = CancellationToken::new();
+
+    let auth_state = RancherAuthState::new(required_role, rancher_tls_verify);
 
     let mcp_service = StreamableHttpService::new(
         || Ok(BeerOrderService::new()),
@@ -168,9 +181,16 @@ async fn main() -> Result<()> {
             .disable_allowed_hosts(),
     );
 
+    let mcp_router = Router::new()
+        .nest_service("/", mcp_service)
+        .layer(middleware::from_fn_with_state(
+            auth_state,
+            rancher_auth_middleware,
+        ));
+
     let app = Router::new()
         .route("/health", get(health))
-        .nest_service("/mcp", mcp_service);
+        .nest("/mcp", mcp_router);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     info!("🍺  susecon-beer-agent listening on {bind_addr}  (MCP endpoint: {bind_addr}/mcp)");

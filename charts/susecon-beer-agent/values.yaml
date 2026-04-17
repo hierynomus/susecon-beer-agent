@@ -31,6 +31,13 @@ ingress:
       enabled: false
       clusterIssuer: letsencrypt-prod
 
+# Rancher authentication
+rancherAuth:
+  # Global role required to use the beer ordering service
+  requiredRole: susecon-beer
+  # Set to "false" to skip TLS verification when calling the Rancher API
+  tlsVerify: "false"
+
 resources:
   limits:
     cpu: 200m
